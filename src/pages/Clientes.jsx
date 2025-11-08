@@ -75,15 +75,16 @@ export default function Clientes() {
       </form>
 
       <Table
-        cols={["ID","Nombre","Email","Tel","Fecha"]}
-        rows={rows.map(c=>({
-          id: c.id_cliente,
-          nombre: c.nombre_completo,
-          email: c.contacto_email,
-          tel: c.contacto_tel,
-          fecha: c.fecha_creacion ? new Date(c.fecha_creacion).toLocaleString() : "-"
-        }))}
-      />
+  cols={["ID","Nombre","Email","Tel","Fecha"]}
+  rows={rows.map(c => ({
+    "ID": c.id_cliente,
+    "Nombre": c.nombre_completo,
+    "Email": c.contacto_email || "",
+    "Tel": c.contacto_tel || "",
+    "Fecha": c.fecha_creacion ? new Date(c.fecha_creacion).toLocaleString() : "-"
+  }))}
+/>
+
     </div>
   );
 }
