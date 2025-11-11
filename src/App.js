@@ -11,6 +11,7 @@ import Documentos from "./pages/Documentos";
 import Notas from "./pages/Notas";
 import Plazos from "./pages/Plazos";
 import ExpedientesCrear from "./pages/ExpedientesCrear";
+import Regresion from "./pages/Regresion";
 function Layout({ children }) {
   return (
     <div style={{display:'flex', flexDirection:'column', height:'100vh'}}>
@@ -40,6 +41,7 @@ export default function App() {
                 <Route path="/documentos" element={<Documentos/>} />
                 <Route path="/notas" element={<Notas/>} />
                 <Route path="/plazos" element={<Plazos/>} />
+                <Route path="/regresion" element={<Regresion/>} />
                 <Route path="*" element={<Navigate to="/" replace/>} />
               </Routes>
             </Layout>

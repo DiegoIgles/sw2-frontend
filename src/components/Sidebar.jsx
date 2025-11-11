@@ -8,6 +8,7 @@ const links = [
   { to: "/notas",      label: "Notas",       icon: "📝" },
   { to: "/plazos",     label: "Plazos",      icon: "⏰" },
   { to: "/documentos", label: "Documentos",  icon: "📄" },
+  { to: "/regresion", label: "Regresion Lineal",  icon: "🤖" },
 ];
 
 const baseLink = (collapsed) => ({
