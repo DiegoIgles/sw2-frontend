@@ -1,57 +1,60 @@
-import { useEffect, useState } from "react";
-import api from "../api/axiosCore";
+import { useState } from "react";
+import { useQuery, useMutation } from "@apollo/client";
+import { GET_CLIENTES, CREATE_CLIENTE } from "../graphql/queries";
 import Table from "../components/Table";
 
 export default function Clientes() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [tel, setTel] = useState("");
 
-  // listar todos
-  const listar = async () => {
-    setLoading(true);
-    setErr("");
-    try {
-      const { data } = await api.get("/clientes"); // <- GET /clientes
-      // normaliza por si faltaran campos
-      const mapped = (data || []).map(c => ({
-        id_cliente: c.id_cliente,
-        nombre_completo: c.nombre_completo,
-        contacto_email: c.contacto_email ?? "",
-        contacto_tel: c.contacto_tel ?? "",
-        fecha_creacion: c.fecha_creacion,
-      }));
-      setRows(mapped);
-    } catch (e) {
-      setErr(e?.response?.data?.message || "Error al listar clientes");
-    } finally {
-      setLoading(false);
+  // Query para listar clientes
+  const { data, loading, refetch } = useQuery(GET_CLIENTES, {
+    variables: { limit: 100, offset: 0 },
+    onError: (e) => {
+      setErr(e?.graphQLErrors?.[0]?.message || e?.message || "Error al listar clientes");
     }
-  };
+  });
 
-  useEffect(() => {
-    listar();
-  }, []);
+  // Mutation para crear cliente
+  const [createCliente, { loading: creating }] = useMutation(CREATE_CLIENTE, {
+    refetchQueries: [{ query: GET_CLIENTES, variables: { limit: 100, offset: 0 } }],
+    onError: (e) => {
+      setErr(e?.graphQLErrors?.[0]?.message || e?.message || "Error al crear cliente");
+    },
+    onCompleted: () => {
+      setNombre("");
+      setEmail("");
+      setTel("");
+      setErr("");
+    }
+  });
+
+  // Normalizar datos de GraphQL (camelCase) a formato de tabla
+  const rows = (data?.clientes || []).map(c => ({
+    id_cliente: c.idCliente,
+    nombre_completo: c.nombreCompleto,
+    contacto_email: c.contactoEmail ?? "",
+    contacto_tel: c.contactoTel ?? "",
+    fecha_creacion: c.fechaRegistro,
+  }));
 
   // crear
   const crear = async (e) => {
     e.preventDefault();
     setErr("");
     try {
-      const { data } = await api.post("/clientes", {
-        nombre_completo: nombre,
-        contacto_email: email || null,
-        contacto_tel: tel || null,
+      await createCliente({
+        variables: {
+          nombreCompleto: nombre,
+          contactoEmail: email || null,
+          contactoTel: tel || null,
+        }
       });
-      // agrega al inicio y limpia, o simplemente vuelve a listar()
-      setRows(r => [data, ...r]);
-      setNombre(""); setEmail(""); setTel("");
     } catch (e) {
-      setErr(e?.response?.data?.message || "Error al crear cliente");
+      // El error ya se maneja en onError del mutation
     }
   };
 
@@ -61,7 +64,7 @@ export default function Clientes() {
         <h1 style={{fontSize:18, fontWeight:600}}>Clientes</h1>
         <div style={{display:'flex', gap:8, alignItems:'center'}}>
           {loading && <span style={{fontSize:12, opacity:.7}}>Cargando...</span>}
-          <button onClick={listar} style={{border:'1px solid #ddd', padding:'6px 10px', borderRadius:6}}>Recargar</button>
+          <button onClick={() => refetch()} style={{border:'1px solid #ddd', padding:'6px 10px', borderRadius:6}}>Recargar</button>
         </div>
       </div>
 
@@ -71,7 +74,9 @@ export default function Clientes() {
         <input placeholder="Nombre" value={nombre} onChange={e=>setNombre(e.target.value)} style={{padding:8, border:'1px solid #ddd', borderRadius:6}}/>
         <input placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={{padding:8, border:'1px solid #ddd', borderRadius:6}}/>
         <input placeholder="Tel" value={tel} onChange={e=>setTel(e.target.value)} style={{padding:8, border:'1px solid #ddd', borderRadius:6}}/>
-        <button style={{background:'#111', color:'#fff', padding:'8px 12px', borderRadius:6}}>Crear</button>
+        <button disabled={creating} style={{background:'#111', color:'#fff', padding:'8px 12px', borderRadius:6, opacity:creating?0.7:1}}>
+          {creating ? "Creando..." : "Crear"}
+        </button>
       </form>
 
       <Table

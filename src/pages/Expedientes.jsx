@@ -1,43 +1,72 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import api from "../api/axiosCore";
+import { useQuery, useMutation } from "@apollo/client";
+import { GET_EXPEDIENTES, UPDATE_EXPEDIENTE } from "../graphql/queries";
 
 const ESTADOS = ["ABIERTO", "EN_PROCESO", "CERRADO"];
 
 export default function ExpedientesList() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
-  const [clienteId, setClienteId] = useState(""); // <- filtro
+  const [clienteId, setClienteId] = useState("");
 
   // Modal editar estado
   const [editOpen, setEditOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [editEstado, setEditEstado] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [editErr, setEditErr] = useState("");
 
-  const cargar = async (idCli) => {
-    setErr(""); setOk(""); setLoading(true);
-    try {
-      const params = {};
-      if (idCli && !Number.isNaN(Number(idCli))) {
-        params.id_cliente = Number(idCli);
-      }
-      const { data } = await api.get("/expedientes", { params });
-      setRows(data || []);
-    } catch (e) {
-      setErr(e?.response?.data?.message || "No se pudo listar expedientes");
-    } finally {
-      setLoading(false);
+  // Query para listar expedientes
+  const { data, loading, refetch } = useQuery(GET_EXPEDIENTES, {
+    variables: {
+      limit: 200,
+      offset: 0,
+      idCliente: clienteId && !Number.isNaN(Number(clienteId)) ? Number(clienteId) : null,
+    },
+    onError: (e) => {
+      setErr(e?.graphQLErrors?.[0]?.message || e?.message || "No se pudo listar expedientes");
     }
+  });
+
+  // Mutation para actualizar expediente
+  const [updateExpediente, { loading: saving }] = useMutation(UPDATE_EXPEDIENTE, {
+    refetchQueries: [{ query: GET_EXPEDIENTES, variables: { limit: 200, offset: 0, idCliente: clienteId && !Number.isNaN(Number(clienteId)) ? Number(clienteId) : null } }],
+    onError: (e) => {
+      const msg = e?.graphQLErrors?.[0]?.message || e?.message || "No se pudo actualizar el estado";
+      setErr(Array.isArray(msg) ? msg.join(", ") : msg);
+    },
+    onCompleted: () => {
+      setOk(`Estado actualizado a "${editEstado}" para #${editRow?.id_expediente}`);
+      setEditOpen(false);
+      setEditRow(null);
+      setEditEstado("");
+    }
+  });
+
+  // Normalizar datos de GraphQL a formato de tabla
+  const rows = (data?.expedientes || []).map(x => ({
+    id_expediente: x.idExpediente,
+    titulo: x.titulo,
+    estado: x.estado,
+    id_cliente: x.idCliente,
+    fecha_creacion: x.fechaCreacion,
+  }));
+
+  const buscar = () => {
+    refetch({
+      limit: 200,
+      offset: 0,
+      idCliente: clienteId && !Number.isNaN(Number(clienteId)) ? Number(clienteId) : null,
+    });
   };
 
-  useEffect(() => { cargar(); }, []);
-
-  const buscar = () => cargar(clienteId);
-  const limpiar = () => { setClienteId(""); cargar(); };
+  const limpiar = () => {
+    setClienteId("");
+    refetch({
+      limit: 200,
+      offset: 0,
+      idCliente: null,
+    });
+  };
 
   const onKeyDown = (e) => {
     if (e.key === "Enter") {
@@ -50,7 +79,7 @@ export default function ExpedientesList() {
   const openEdit = (row) => {
     setEditRow(row);
     setEditEstado(row?.estado || "ABIERTO");
-    setEditErr("");
+    setErr("");
     setOk("");
     setEditOpen(true);
   };
@@ -60,26 +89,21 @@ export default function ExpedientesList() {
     setEditOpen(false);
     setEditRow(null);
     setEditEstado("");
-    setEditErr("");
+    setErr("");
   };
 
   const saveEdit = async () => {
     if (!editRow) return;
-    setSaving(true);
-    setEditErr("");
+    setErr("");
     try {
-      await api.patch(`/expedientes/${editRow.id_expediente}`, { estado: editEstado });
-      // update optimista
-      setRows(prev =>
-        prev.map(r => r.id_expediente === editRow.id_expediente ? { ...r, estado: editEstado } : r)
-      );
-      setOk(`Estado actualizado a "${editEstado}" para #${editRow.id_expediente}`);
-      setEditOpen(false);
+      await updateExpediente({
+        variables: {
+          id: editRow.id_expediente,
+          estado: editEstado,
+        }
+      });
     } catch (e) {
-      const msg = e?.response?.data?.message || "No se pudo actualizar el estado";
-      setEditErr(Array.isArray(msg) ? msg.join(", ") : msg);
-    } finally {
-      setSaving(false);
+      // El error ya se maneja en onError del mutation
     }
   };
 
@@ -131,7 +155,7 @@ export default function ExpedientesList() {
                 <td style={{padding:'10px 12px', borderBottom:'1px solid #f1f1f1'}}>{x.titulo}</td>
                 <td style={{padding:'10px 12px', borderBottom:'1px solid #f1f1f1'}}>{x.estado}</td>
                 <td style={{padding:'10px 12px', borderBottom:'1px solid #f1f1f1'}}>
-                  {x.cliente?.id_cliente ?? x.id_cliente ?? "-"}
+                  {x.id_cliente ?? "-"}
                 </td>
                 <td style={{padding:'10px 12px', borderBottom:'1px solid #f1f1f1'}}>
                   {x.fecha_creacion ? new Date(x.fecha_creacion).toLocaleString() : "-"}
@@ -187,7 +211,7 @@ export default function ExpedientesList() {
                 {ESTADOS.map(op => <option key={op} value={op}>{op}</option>)}
               </select>
 
-              {editErr && <div style={{color:'#b00', marginTop:8, fontSize:13}}>{editErr}</div>}
+              {err && <div style={{color:'#b00', marginTop:8, fontSize:13}}>{err}</div>}
             </div>
 
             <div style={{display:'flex', justifyContent:'flex-end', gap:8}}>

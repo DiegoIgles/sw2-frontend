@@ -1,76 +1,76 @@
-import { useEffect, useState } from "react";
-import api from "../api/axiosCore";
+import { useState } from "react";
+import { useQuery, useMutation } from "@apollo/client";
+import { GET_EXPEDIENTES, GET_NOTAS_EXPEDIENTE, CREATE_NOTA, UPDATE_NOTA, DELETE_NOTA } from "../graphql/queries";
 import Table from "../components/Table";
 
 const TIPOS = ["GENERAL", "ACTUACION", "INTERNA"];
 
 export default function Notas() {
   const [expId, setExpId] = useState("");
-  const [expedientes, setExpedientes] = useState([]);
-  const [loadingExp, setLoadingExp] = useState(false);
-
-  const [rows, setRows] = useState([]);
   const [contenido, setContenido] = useState("");
   const [tipo, setTipo] = useState(TIPOS[0]);
-  const [edit, setEdit] = useState(null); // { id_nota, contenido, tipo }
+  const [edit, setEdit] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  // --- Cargar expedientes para el selector ---
-  const cargarExpedientes = async (q) => {
-    setLoadingExp(true);
-    try {
-      const { data } = await api.get("/expedientes", { params: { limit: 200, q } });
-      setExpedientes(data || []);
-    } finally {
-      setLoadingExp(false);
+  // Query para cargar expedientes
+  const { data: expedientesData, loading: loadingExp, refetch: refetchExpedientes } = useQuery(GET_EXPEDIENTES, {
+    variables: { limit: 200, offset: 0, q: searchTerm || null },
+    skip: false,
+  });
+
+  const expedientes = expedientesData?.expedientes || [];
+
+  // Query para listar notas del expediente seleccionado
+  const { data: notasData, loading: loadingNotas, refetch: refetchNotas } = useQuery(GET_NOTAS_EXPEDIENTE, {
+    variables: { idExpediente: expId ? Number(expId) : 0 },
+    skip: !expId,
+  });
+
+  // Normalizar datos de GraphQL
+  const rows = (notasData?.notasExpediente || []).map((n) => ({
+    id_nota: n.idNota,
+    contenido: n.contenido,
+    tipo: n.tipo ?? null,
+    fecha_registro: n.fechaCreacion,
+  }));
+
+  // Mutation para crear nota
+  const [createNota, { loading: creating }] = useMutation(CREATE_NOTA, {
+    refetchQueries: [{ query: GET_NOTAS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+    onCompleted: () => {
+      setContenido("");
+      setTipo(TIPOS[0]);
     }
-  };
+  });
 
-  useEffect(() => {
-    cargarExpedientes();
-  }, []);
-
-  // --- Listar notas del expediente seleccionado ---
-  const listar = async () => {
-    if (!expId) {
-      setRows([]);
-      return;
+  // Mutation para actualizar nota
+  const [updateNota, { loading: updating }] = useMutation(UPDATE_NOTA, {
+    refetchQueries: [{ query: GET_NOTAS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+    onCompleted: () => {
+      setEdit(null);
     }
-    const { data } = await api.get(`/expedientes/${expId}/notas`);
-    const mapped = (data || []).map((n) => ({
-      id_nota: n.id_nota || n.id || n.idNota,
-      contenido: n.contenido,
-      tipo: n.tipo ?? null,
-      // en tu entity es fecha_registro
-      fecha_registro: n.fecha_registro || n.fecha || n.createdAt,
-    }));
-    setRows(mapped);
-  };
+  });
 
-  useEffect(() => {
-    if (expId) listar();
-    else setRows([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expId]);
+  // Mutation para eliminar nota
+  const [deleteNota] = useMutation(DELETE_NOTA, {
+    refetchQueries: [{ query: GET_NOTAS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+  });
 
   // --- Crear nota ---
   const crear = async (e) => {
     e.preventDefault();
     if (!expId || !contenido.trim()) return;
-    const { data } = await api.post("/notas", {
-      id_expediente: Number(expId),
-      contenido,
-      tipo,
-    });
-    setContenido("");
-    setTipo(TIPOS[0]);
-
-    const nueva = {
-      id_nota: (data && (data.id_nota || data.id)) ?? Math.random(),
-      contenido: data?.contenido ?? contenido,
-      tipo: data?.tipo ?? tipo ?? null,
-      fecha_registro: data?.fecha_registro || new Date().toISOString(),
-    };
-    setRows((r) => [nueva, ...r]);
+    try {
+      await createNota({
+        variables: {
+          idExpediente: Number(expId),
+          contenido,
+          tipo: tipo || null,
+        }
+      });
+    } catch (error) {
+      console.error("Error al crear nota:", error);
+    }
   };
 
   // --- Edición ---
@@ -83,25 +83,30 @@ export default function Notas() {
   const guardarEdicion = async (e) => {
     e.preventDefault();
     if (!edit?.id_nota) return;
-    const { data } = await api.patch(`/notas/${edit.id_nota}`, {
-      contenido: edit.contenido,
-      tipo: edit.tipo,
-    });
-    const actualizada = {
-      id_nota: data?.id_nota ?? edit.id_nota,
-      contenido: data?.contenido ?? edit.contenido,
-      tipo: data?.tipo ?? edit.tipo ?? null,
-      fecha_registro: data?.fecha_registro, // puede venir igual
-    };
-    setRows((r) => r.map((n) => (n.id_nota === actualizada.id_nota ? actualizada : n)));
-    setEdit(null);
+    try {
+      await updateNota({
+        variables: {
+          id: edit.id_nota,
+          contenido: edit.contenido,
+          tipo: edit.tipo || null,
+        }
+      });
+    } catch (error) {
+      console.error("Error al actualizar nota:", error);
+    }
   };
 
   // --- Eliminar ---
   const eliminar = async (id_nota) => {
     if (!window.confirm("¿Eliminar nota?")) return;
-    await api.delete(`/notas/${id_nota}`);
-    setRows((r) => r.filter((n) => n.id_nota !== id_nota));
+    try {
+      await deleteNota({
+        variables: { id: id_nota }
+      });
+    } catch (error) {
+      console.error("Error al eliminar nota:", error);
+      alert("Error al eliminar la nota");
+    }
   };
 
   return (
@@ -117,23 +122,25 @@ export default function Notas() {
         >
           <option value="">{loadingExp ? "Cargando expedientes..." : "— Seleccione expediente —"}</option>
           {expedientes.map((e) => (
-            <option key={e.id_expediente} value={e.id_expediente}>
-              #{e.id_expediente} · {e.titulo}
+            <option key={e.idExpediente} value={e.idExpediente}>
+              #{e.idExpediente} · {e.titulo}
             </option>
           ))}
         </select>
 
         <input
           placeholder="Buscar expediente (por título)"
+          value={searchTerm}
           onChange={(ev) => {
             const term = ev.target.value;
-            cargarExpedientes(term || undefined);
+            setSearchTerm(term);
+            refetchExpedientes({ limit: 200, offset: 0, q: term || null });
           }}
           style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6, minWidth: 220 }}
         />
 
         <button
-          onClick={listar}
+          onClick={() => refetchNotas()}
           disabled={!expId}
           style={{
             background: expId ? "#111" : "#999",
@@ -142,7 +149,7 @@ export default function Notas() {
             borderRadius: 6,
           }}
         >
-          Listar notas
+          {loadingNotas ? "Cargando..." : "Listar notas"}
         </button>
       </div>
 
@@ -167,19 +174,18 @@ export default function Notas() {
           style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6, minWidth: 320 }}
         />
         <button
-          disabled={!expId || !contenido.trim()}
+          disabled={!expId || !contenido.trim() || creating}
           style={{
             background: !expId || !contenido.trim() ? "#999" : "#111",
             color: "#fff",
             padding: "8px 12px",
             borderRadius: 6,
+            opacity: creating ? 0.7 : 1,
           }}
         >
-          Crear
+          {creating ? "Creando..." : "Crear"}
         </button>
       </form>
-
-
 
       {/* Tabla */}
       <Table
@@ -235,8 +241,18 @@ export default function Notas() {
             style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6 }}
           />
           <div style={{ display: "flex", gap: 8 }}>
-            <button style={{ background: "#111", color: "#fff", padding: "8px 12px", borderRadius: 6 }}>Guardar</button>
-            <button type="button" onClick={cancelarEditar} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ddd" }}>
+            <button 
+              disabled={updating}
+              style={{ background: "#111", color: "#fff", padding: "8px 12px", borderRadius: 6, opacity: updating ? 0.7 : 1 }}
+            >
+              {updating ? "Guardando..." : "Guardar"}
+            </button>
+            <button 
+              type="button" 
+              onClick={cancelarEditar} 
+              disabled={updating}
+              style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ddd", opacity: updating ? 0.7 : 1 }}
+            >
               Cancelar
             </button>
           </div>

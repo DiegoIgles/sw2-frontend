@@ -1,86 +1,96 @@
-import { useEffect, useState } from "react";
-import api from "../api/axiosCore";
+import { useState } from "react";
+import { useQuery, useMutation } from "@apollo/client";
+import { GET_EXPEDIENTES, GET_PLAZOS_EXPEDIENTE, CREATE_PLAZO, UPDATE_PLAZO, MARCAR_PLAZO_CUMPLIDO, DELETE_PLAZO } from "../graphql/queries";
 import Table from "../components/Table";
 
 export default function Plazos() {
   const [expId, setExpId] = useState("");
-  const [expedientes, setExpedientes] = useState([]);
-  const [loadingExp, setLoadingExp] = useState(false);
-
-  const [rows, setRows] = useState([]);
   const [desc, setDesc] = useState("");
-  const [fecha, setFecha] = useState(""); // YYYY-MM-DD
-  const [edit, setEdit] = useState(null); // { id_plazo, descripcion, fecha_vencimiento }
+  const [fecha, setFecha] = useState("");
+  const [edit, setEdit] = useState(null);
   const [soloPendientes, setSoloPendientes] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  // ---------- Expedientes (selector + búsqueda) ----------
-  const cargarExpedientes = async (q) => {
-    setLoadingExp(true);
-    try {
-      const { data } = await api.get("/expedientes", { params: { limit: 200, q } });
-      setExpedientes(data || []);
-    } finally {
-      setLoadingExp(false);
+  // Query para cargar expedientes
+  const { data: expedientesData, loading: loadingExp, refetch: refetchExpedientes } = useQuery(GET_EXPEDIENTES, {
+    variables: { limit: 200, offset: 0, q: searchTerm || null },
+  });
+
+  const expedientes = expedientesData?.expedientes || [];
+
+  // Query para listar plazos del expediente
+  const { data: plazosData, loading: loadingPlazos, refetch: refetchPlazos } = useQuery(GET_PLAZOS_EXPEDIENTE, {
+    variables: { idExpediente: expId ? Number(expId) : 0 },
+    skip: !expId,
+  });
+
+  // Normalizar datos de GraphQL
+  const rows = (plazosData?.plazosExpediente || []).map((p) => ({
+    id_plazo: p.idPlazo,
+    descripcion: p.descripcion,
+    fecha_vencimiento: p.fechaVencimiento,
+    cumplido: p.cumplido,
+    fecha_cumplimiento: p.fechaCumplimiento,
+  }));
+
+  // Mutation para crear plazo
+  const [createPlazo, { loading: creating }] = useMutation(CREATE_PLAZO, {
+    refetchQueries: [{ query: GET_PLAZOS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+    onCompleted: () => {
+      setDesc("");
+      setFecha("");
     }
-  };
+  });
 
-  useEffect(() => {
-    cargarExpedientes();
-  }, []);
+  // Mutation para marcar como cumplido
+  const [marcarCumplido] = useMutation(MARCAR_PLAZO_CUMPLIDO, {
+    refetchQueries: [{ query: GET_PLAZOS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+  });
 
-  // ---------- Listar por expediente ----------
-  const listar = async () => {
-    if (!expId) {
-      setRows([]);
-      return;
+  // Mutation para actualizar plazo
+  const [updatePlazo, { loading: updating }] = useMutation(UPDATE_PLAZO, {
+    refetchQueries: [{ query: GET_PLAZOS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+    onCompleted: () => {
+      setEdit(null);
     }
-    const { data } = await api.get(`/expedientes/${expId}/plazos`);
-    const mapped = (data || []).map((p) => ({
-      id_plazo: p.id_plazo || p.id || p.idPlazo,
-      descripcion: p.descripcion,
-      fecha_vencimiento: p.fecha_vencimiento,
-      cumplido: !!p.cumplido,
-      fecha_cumplimiento: p.fecha_cumplimiento,
-    }));
-    setRows(mapped);
-  };
+  });
 
-  useEffect(() => {
-    if (expId) listar();
-    else setRows([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expId]);
+  // Mutation para eliminar plazo
+  const [deletePlazo] = useMutation(DELETE_PLAZO, {
+    refetchQueries: [{ query: GET_PLAZOS_EXPEDIENTE, variables: { idExpediente: expId ? Number(expId) : 0 } }],
+  });
 
-  // ---------- Crear ----------
+  // Crear plazo
   const crear = async (e) => {
     e.preventDefault();
     if (!expId || !desc.trim() || !fecha) return;
-    const { data } = await api.post("/plazos", {
-      id_expediente: Number(expId),
-      descripcion: desc,
-      fecha_vencimiento: fecha,
-    });
-    const nueva = {
-      id_plazo: data?.id_plazo || data?.id || Math.random(),
-      descripcion: data?.descripcion ?? desc,
-      fecha_vencimiento: data?.fecha_vencimiento ?? fecha,
-      cumplido: !!data?.cumplido,
-      fecha_cumplimiento: data?.fecha_cumplimiento ?? null,
-    };
-    setRows((r) => [nueva, ...r]);
-    setDesc("");
-    setFecha("");
+    try {
+      await createPlazo({
+        variables: {
+          idExpediente: Number(expId),
+          descripcion: desc,
+          fechaVencimiento: fecha,
+        }
+      });
+    } catch (error) {
+      console.error("Error al crear plazo:", error);
+      alert("Error al crear el plazo");
+    }
   };
 
-  // ---------- Cumplir ----------
+  // Marcar como cumplido
   const cumplir = async (id_plazo) => {
-    const { data } = await api.patch(`/plazos/${id_plazo}/cumplir`);
-    setRows((r) =>
-      r.map((p) => (p.id_plazo === id_plazo ? { ...p, ...data, cumplido: true } : p))
-    );
+    try {
+      await marcarCumplido({
+        variables: { idPlazo: id_plazo }
+      });
+    } catch (error) {
+      console.error("Error al marcar plazo como cumplido:", error);
+      alert("Error al marcar el plazo como cumplido");
+    }
   };
 
-  // ---------- Editar ----------
+  // Editar plazo
   const empezarEditar = (p) => {
     setEdit({
       id_plazo: p.id_plazo,
@@ -94,27 +104,31 @@ export default function Plazos() {
   const guardarEdicion = async (e) => {
     e.preventDefault();
     if (!edit?.id_plazo) return;
-    const body = {
-      descripcion: edit.descripcion,
-      fecha_vencimiento: edit.fecha_vencimiento,
-    };
-    const { data } = await api.patch(`/plazos/${edit.id_plazo}`, body);
-    const actualizada = {
-      id_plazo: data?.id_plazo ?? edit.id_plazo,
-      descripcion: data?.descripcion ?? edit.descripcion,
-      fecha_vencimiento: data?.fecha_vencimiento ?? edit.fecha_vencimiento,
-      cumplido: !!data?.cumplido,
-      fecha_cumplimiento: data?.fecha_cumplimiento ?? null,
-    };
-    setRows((r) => r.map((p) => (p.id_plazo === actualizada.id_plazo ? actualizada : p)));
-    setEdit(null);
+    try {
+      await updatePlazo({
+        variables: {
+          idPlazo: edit.id_plazo,
+          descripcion: edit.descripcion,
+          fechaVencimiento: edit.fecha_vencimiento,
+        }
+      });
+    } catch (error) {
+      console.error("Error al actualizar plazo:", error);
+      alert("Error al actualizar el plazo");
+    }
   };
 
-  // ---------- Eliminar ----------
+  // Eliminar plazo
   const eliminar = async (id_plazo) => {
     if (!window.confirm("¿Eliminar plazo?")) return;
-    await api.delete(`/plazos/${id_plazo}`);
-    setRows((r) => r.filter((p) => p.id_plazo !== id_plazo));
+    try {
+      await deletePlazo({
+        variables: { idPlazo: id_plazo }
+      });
+    } catch (error) {
+      console.error("Error al eliminar plazo:", error);
+      alert("Error al eliminar el plazo");
+    }
   };
 
   const displayRows = soloPendientes ? rows.filter((p) => !p.cumplido) : rows;
@@ -143,23 +157,25 @@ export default function Plazos() {
           >
             <option value="">{loadingExp ? "Cargando expedientes..." : "— Seleccione expediente —"}</option>
             {expedientes.map((e) => (
-              <option key={e.id_expediente} value={e.id_expediente}>
-                #{e.id_expediente} · {e.titulo}
+              <option key={e.idExpediente} value={e.idExpediente}>
+                #{e.idExpediente} · {e.titulo}
               </option>
             ))}
           </select>
 
           <input
             placeholder="Buscar expediente (por título)"
+            value={searchTerm}
             onChange={(ev) => {
               const term = ev.target.value;
-              cargarExpedientes(term || undefined);
+              setSearchTerm(term);
+              refetchExpedientes({ limit: 200, offset: 0, q: term || null });
             }}
             style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6, minWidth: 220 }}
           />
 
           <button
-            onClick={listar}
+            onClick={() => refetchPlazos()}
             disabled={!expId}
             style={{
               background: expId ? "#111" : "#999",
@@ -168,7 +184,7 @@ export default function Plazos() {
               borderRadius: 6,
             }}
           >
-            Listar plazos
+            {loadingPlazos ? "Cargando..." : "Listar plazos"}
           </button>
 
           <label style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: 8 }}>
@@ -218,16 +234,17 @@ export default function Plazos() {
           </div>
 
           <button
-            disabled={!expId || !desc.trim() || !fecha}
+            disabled={!expId || !desc.trim() || !fecha || creating}
             style={{
               background: !expId || !desc.trim() || !fecha ? "#999" : "#111",
               color: "#fff",
               padding: "8px 12px",
               borderRadius: 6,
               height: 40,
+              opacity: creating ? 0.7 : 1,
             }}
           >
-            Crear
+            {creating ? "Creando..." : "Crear"}
           </button>
         </form>
       </div>
@@ -294,13 +311,17 @@ export default function Plazos() {
             </div>
 
             <div style={{ display: "flex", gap: 8 }}>
-              <button style={{ background: "#111", color: "#fff", padding: "8px 12px", borderRadius: 6 }}>
-                Guardar
+              <button 
+                disabled={updating}
+                style={{ background: "#111", color: "#fff", padding: "8px 12px", borderRadius: 6, opacity: updating ? 0.7 : 1 }}
+              >
+                {updating ? "Guardando..." : "Guardar"}
               </button>
               <button
                 type="button"
                 onClick={cancelarEditar}
-                style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ddd" }}
+                disabled={updating}
+                style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ddd", opacity: updating ? 0.7 : 1 }}
               >
                 Cancelar
               </button>

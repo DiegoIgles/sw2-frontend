@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useQuery } from "@apollo/client";
 import {
   BarChart,
   Bar,
@@ -17,6 +18,7 @@ import {
   Scatter,
 } from "recharts";
 import { RefreshCw, AlertTriangle, FileWarning } from "lucide-react";
+import { ML_PROB_RIESGO, ML_PLAZOS_ANOMALIAS, ML_DOCS_CLUSTERS } from "../graphql/queries";
 
 // Tip: If you're using shadcn/ui in your project, these imports will work out of the box.
 // If not, you can replace Card components with simple <div> wrappers.
@@ -127,36 +129,23 @@ function explainPlazoClusterCenter(ce = {}) {
   return { label: parts.slice(0, 3).join(" · "), bullets: parts };
 }
 
-function explainDocClusterCenter(ce = {}) {
-  const parts = [];
-  const s = Number(ce.size_mb ?? 0);
-  if (s < 0.3) parts.push("archivos pequeños");
-  else if (s < 0.7) parts.push("archivos medianos");
-  else parts.push("archivos grandes");
-
-  const dsc = Number(ce.days_since_created ?? 0);
-  parts.push(dsc <= 0 ? "recientes" : "antiguos");
-
-  const nl = Number(ce.name_len ?? 0);
-  if (nl < 20) parts.push("nombre corto");
-  else if (nl < 35) parts.push("nombre medio");
-  else parts.push("nombre largo");
-
-  const pdf = Number(ce.is_pdf ?? 0);
-  parts.push(pdf >= 0.5 ? "PDF" : "no PDF");
-
-  return { label: parts.slice(0, 3).join(" · "), bullets: parts };
-}
+// Función removida: explainDocClusterCenter ya no se usa porque GraphQL no devuelve centers de clusters
 
 // =============================
 // Main Dashboard
 // =============================
 export default function Dashboard() {
-  // Endpoints
-  const sup = useFetchJson(EP.SUP_PROB_RIESGO, [EP.SUP_PROB_RIESGO]);
+  // Queries GraphQL (disponibles)
+  const sup = useQuery(ML_PROB_RIESGO);
+  const mlAno = useQuery(ML_PLAZOS_ANOMALIAS, {
+    variables: { contaminacion: 0.2, maxLista: 50, explain: true }
+  });
+  const docClu = useQuery(ML_DOCS_CLUSTERS, {
+    variables: { k: 3 }
+  });
+
+  // Endpoints REST (no disponibles en GraphQL)
   const mlClu = useFetchJson(EP.ML_CLUSTERS(3), [EP.ML_CLUSTERS(3)]);
-  const mlAno = useFetchJson(EP.ML_ANOMALIAS, [EP.ML_ANOMALIAS]);
-  const docClu = useFetchJson(EP.DOCS_CLUSTERS(3), [EP.DOCS_CLUSTERS(3)]);
   const docAno = useFetchJson(EP.DOCS_ANOMALIAS(0.2, true, 3), [EP.DOCS_ANOMALIAS(0.2, true, 3)]);
   const nearDup = useFetchJson(EP.DOCS_NEAR_DUP(0.85, 50, 0.7, 0.3), [EP.DOCS_NEAR_DUP(0.85, 50, 0.7, 0.3)]);
   // Deep / Autoencoders
@@ -165,9 +154,9 @@ export default function Dashboard() {
 
   const onRefresh = () => {
     sup.refetch();
-    mlClu.refetch();
     mlAno.refetch();
     docClu.refetch();
+    mlClu.refetch();
     docAno.refetch();
     nearDup.refetch();
     aePlazos.refetch();
@@ -176,12 +165,18 @@ export default function Dashboard() {
 
   // =============================
   // Derivations - Supervisado (plazos)
+  // NOTA: GraphQL solo devuelve probabilidadRiesgo, no prioridad_recomendada ni overdue_now
   // =============================
   const prioridadPie = useMemo(() => {
-    const rows = sup.data?.data || [];
+    // Como GraphQL no tiene prioridad_recomendada, calculamos basado en probabilidadRiesgo
+    const rows = sup.data?.mlProbRiesgo?.predictions || [];
     const counts = rows.reduce(
       (acc, r) => {
-        acc[r.prioridad_recomendada] = (acc[r.prioridad_recomendada] || 0) + 1;
+        const prob = r.probabilidadRiesgo || 0;
+        let prioridad = "BAJA";
+        if (prob >= 0.7) prioridad = "ALTA";
+        else if (prob >= 0.4) prioridad = "MEDIA";
+        acc[prioridad] = (acc[prioridad] || 0) + 1;
         return acc;
       },
       { ALTA: 0, MEDIA: 0, BAJA: 0 }
@@ -190,25 +185,30 @@ export default function Dashboard() {
   }, [sup.data]);
 
   const topRiesgo = useMemo(() => {
-    const rows = [...(sup.data?.data || [])];
-    rows.sort((a, b) => b.riesgo_atraso - a.riesgo_atraso);
-    return rows.slice(0, 5).map((r) => ({
-      id_plazo: r.id_plazo,
-      descripcion: r.descripcion,
-      riesgo: Number(r.riesgo_atraso?.toFixed(4)),
-      prioridad: r.prioridad_recomendada,
-    }));
+    const rows = [...(sup.data?.mlProbRiesgo?.predictions || [])];
+    rows.sort((a, b) => (b.probabilidadRiesgo || 0) - (a.probabilidadRiesgo || 0));
+    return rows.slice(0, 5).map((r) => {
+      const prob = r.probabilidadRiesgo || 0;
+      let prioridad = "BAJA";
+      if (prob >= 0.7) prioridad = "ALTA";
+      else if (prob >= 0.4) prioridad = "MEDIA";
+      return {
+        id_plazo: r.idPlazo,
+        descripcion: r.descripcion,
+        riesgo: Number(prob.toFixed(4)),
+        prioridad: prioridad,
+      };
+    });
   }, [sup.data]);
 
   const overdueStats = useMemo(() => {
-    const rows = sup.data?.data || [];
-    const yes = rows.filter((r) => r.overdue_now).length;
-    const no = rows.length - yes;
+    // Como GraphQL no tiene overdue_now, no podemos calcular esto
+    // Devolvemos datos vacíos o mantenemos REST para esta métrica
     return [
-      { name: "Vencidos", value: yes },
-      { name: "Al día", value: no },
+      { name: "Vencidos", value: 0 },
+      { name: "Al día", value: 0 },
     ];
-  }, [sup.data]);
+  }, []);
 
   // =============================
   // Derivations - No supervisado (plazos)
@@ -228,12 +228,12 @@ export default function Dashboard() {
   }, [mlClu.data]);
 
   const anomalyBars = useMemo(() => {
-    const top = mlAno.data?.top || [];
+    const top = mlAno.data?.mlPlazosAnomalias?.top || [];
     return top.map((t) => ({
-      id: t.id_plazo,
+      id: t.idPlazo,
       descripcion: t.descripcion,
-      score: Number((t.anomaly_score).toFixed(4)),
-      es_anomalo: t.es_anomalo,
+      score: Number((t.score || 0).toFixed(4)),
+      es_anomalo: t.score < -0.5, // Score negativo = anómalo
     }));
   }, [mlAno.data]);
 
@@ -241,27 +241,47 @@ export default function Dashboard() {
   // Derivations - Docs clustering & anomalies
   // =============================
   const docClusterSizes = useMemo(() => {
-    const clusters = docClu.data?.clusters || [];
-    return clusters.map((c) => ({ cluster: String(c.cluster), size: c.size }));
+    // Calcular tamaños de clusters desde assignments
+    const assigns = docClu.data?.mlDocsClusters?.assignments || [];
+    const clusterCounts = {};
+    assigns.forEach((a) => {
+      const cl = String(a.cluster);
+      clusterCounts[cl] = (clusterCounts[cl] || 0) + 1;
+    });
+    return Object.entries(clusterCounts).map(([cluster, size]) => ({ cluster, size }));
   }, [docClu.data]);
 
   const docClusterExplain = useMemo(() => {
-    const clusters = docClu.data?.clusters || [];
+    // Como no tenemos centers en GraphQL, usamos descripciones simples
+    const assigns = docClu.data?.mlDocsClusters?.assignments || [];
     const map = {};
-    clusters.forEach((c) => {
-      map[String(c.cluster)] = explainDocClusterCenter(c.center || {});
+    assigns.forEach((a) => {
+      const cl = String(a.cluster);
+      if (!map[cl]) {
+        // Descripción simple basada en el cluster
+        map[cl] = { label: `Cluster ${cl}`, bullets: [`Cluster ${cl}`] };
+      }
     });
     return map;
   }, [docClu.data]);
 
   const docsScatter = useMemo(() => {
-    const assigns = docClu.data?.assignments || [];
-    return assigns.map((a) => ({
-      x: a.features?.name_len ?? 0,
-      y: Number((a.features?.size_mb ?? 0).toFixed(3)),
-      cluster: String(a.cluster),
-      filename: a.filename,
-    }));
+    const assigns = docClu.data?.mlDocsClusters?.assignments || [];
+    return assigns.map((a) => {
+      // features viene como JSON string, necesitamos parsearlo
+      let features = {};
+      try {
+        features = a.features ? JSON.parse(a.features) : {};
+      } catch (e) {
+        features = {};
+      }
+      return {
+        x: features?.name_len ?? 0,
+        y: Number((features?.size_mb ?? 0).toFixed(3)),
+        cluster: String(a.cluster),
+        filename: a.filename,
+      };
+    });
   }, [docClu.data]);
 
   const docAnomalyBars = useMemo(() => {
@@ -480,8 +500,8 @@ export default function Dashboard() {
                 <BarChart data={anomalyBars} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="id" />
-                  <YAxis domain={[0, 1]} />
-                  <Tooltip formatter={(v) => [Number(v).toFixed(3), 'anomaly_score (0–1)']} />
+                  <YAxis />
+                  <Tooltip formatter={(v) => [Number(v).toFixed(3), 'anomaly_score']} />
                   <Legend />
                   <Bar dataKey="score" name="anomaly_score">
                     {anomalyBars.map((d, idx) => (
@@ -528,9 +548,9 @@ export default function Dashboard() {
             <div>
               <div className="font-medium mb-1">Documentos</div>
               <div className="text-sm">
-                {(docClu.data?.clusters || []).map((c) => (
-                  <div key={`doc-c-${c.cluster}`} className="mb-1">
-                    <b>C{String(c.cluster)}:</b> {docClusterExplain[String(c.cluster)]?.label || "sin resumen"}
+                {Object.keys(docClusterExplain).map((cl) => (
+                  <div key={`doc-c-${cl}`} className="mb-1">
+                    <b>C{cl}:</b> {docClusterExplain[cl]?.label || "sin resumen"}
                   </div>
                 ))}
               </div>

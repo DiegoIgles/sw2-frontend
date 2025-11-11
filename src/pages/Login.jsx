@@ -24,7 +24,12 @@ export default function Login() {
       await login(email, password);          // <- esto setea el user en el contexto
       navigate("/", { replace: true });      // <- redirige al dashboard
     } catch (e) {
-      setErr(e?.response?.data?.message || "Error de login");
+      // Manejar errores de GraphQL
+      const errorMessage = e?.graphQLErrors?.[0]?.message || 
+                           e?.networkError?.message || 
+                           e?.message || 
+                           "Error de login";
+      setErr(errorMessage);
     } finally {
       setLoading(false);
     }
